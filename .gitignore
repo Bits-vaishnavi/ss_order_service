@@ -1,0 +1,8 @@
+node_modules/
+.env
+*.log
+order_service.tar
+*.tar
+generated/
+dist/
+*.zip

@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  order_id         Int           @id  @default(autoincrement())
+  customer_id      Int?
+  order_status     OrderStatus   @default(PENDING)
+  payment_status   PaymentStatus @default(PENDING)
+  order_total      Decimal       @db.Decimal(10, 2)
+  created_at       DateTime      @default(now()) @db.DateTime(0)
+  totals_signature String        @default("TEMP") @db.VarChar(255)
+  payment_id       String?       @db.VarChar(50)
+  items            OrderItem[]
+
+  @@map("eci_orders")
+}
+
+model OrderItem {
+  order_item_id Int        @id @default(autoincrement())
+  order_id      Int?       
+  product_id    Int?
+  sku           String?    @db.Text
+  quantity      Int?
+  unit_price    Decimal    @db.Decimal(10, 2)
+  line_status   LineStatus @default(PENDING)
+  product_name  String?    @db.VarChar(255)
+  tax_rate      Decimal    @default(0.0500) @db.Decimal(5, 4)
+
+  order         Order?     @relation(fields: [order_id], references: [order_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([order_id])
+  @@map("eci_order_items")
+}
+
+
+model IdempotencyKey {
+  key           String    @id @db.VarChar(255)
+  resource_path String    @db.VarChar(255)
+  request_hash  String    @db.VarChar(255)
+  response_code Int?      @db.SmallInt
+  response_body Json?
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("idempotency_keys")
+}
+
+enum OrderStatus {
+  DELIVERED
+  CANCELLED
+  PENDING
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum LineStatus {
+  PENDING
+  SHIPPED
+  CANCELLED
+}
