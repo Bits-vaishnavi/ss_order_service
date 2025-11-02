@@ -1,6 +1,6 @@
 // src/routes/orderRoutes.js
-import express from 'express'; // Change: Use import for consistency
-import { getOrderById, listOrders, createOrder } from '../controllers/orderController.js'; // Change: Use import and .js extension
+import express from 'express'; 
+import { getOrderById, listOrders, createOrder } from '../controllers/orderController.js'; 
 // Assuming you have an idempotency middleware
 import checkIdempotency from '../middleware/idempotency.js'; // Use import
 

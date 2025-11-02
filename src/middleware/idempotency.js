@@ -4,8 +4,17 @@ import crypto from 'crypto';
 
 
 async function checkIdempotency(req, res, next) {
-    const idempotencyKey = req.headers['idempotency-key'];
+    // Use Express' case-insensitive getter to find common header names
+    const idempotencyKey = req.get('x-idempotency-key') || req.get('idempotency-key') || req.get('idempotency_key');
     const resourcePath = req.baseUrl + req.path;
+
+    // Debug logging to help trace why keys may be missing in some clients
+    // (Remove or lower to debug level in production)
+    console.debug('Idempotency middleware headers snapshot:', {
+        got_x: req.get('x-idempotency-key'),
+        got_plain: req.get('idempotency-key'),
+        raw_headers: Object.keys(req.headers)
+    });
 
     if (!idempotencyKey) {
         // Idempotency is required for POST /v1/orders

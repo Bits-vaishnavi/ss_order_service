@@ -43,31 +43,30 @@ export async function createOrderSaga(orderData) {
  try {
  console.log('Pre-Saga Step 1A: Calling Catalog Service to verify prices and existence...');
  
-    // Extract product IDs and quantities to send to Catalog Service
-    const itemDetails = orderData.items.map(item => ({ 
-        product_id: item.productId, 
-        quantity: item.quantity 
-    }));
-    
-    // Assume the Catalog Service has an endpoint to verify and return current prices
-    const catalogResponse = await axios.post(`${CATALOG_SERVICE_URL}/verify-pricing`, { 
-        items: itemDetails
-    });
+// Extract product IDs and quantities to send to Catalog Service
+const productIds = orderData.items.map(item => item.productId);
 
-    if (catalogResponse.status !== 200 || !catalogResponse.data.items) {
-        throw new Error("Catalog service failed to verify products or pricing.");
-    }
-    
-    pricedItems = catalogResponse.data.items;
-    finalTotalAmount = calculateTotalAmount(pricedItems);
-    
-    console.log(`Products verified. Final calculated total: ${finalTotalAmount}`);
-    
-  } catch (error) {
-    // If Catalog fails, we halt before starting the local transaction, no compensation needed.
-    console.error('Pre-Saga failed (Catalog Service Error). Halting order process.', error.message);
-    throw new Error(`Pricing verification failed: ${error.message}`);
-  }
+const catalogResponse = await axios.get(`${CATALOG_SERVICE_URL}/products/prices`, {
+  params: { productIds: productIds } 
+});
+console.log(`DEBUG: Catalog Service response data: ${JSON.stringify(catalogResponse.data, null, 2)}`);  
+
+ if (catalogResponse.status !== 200 || !catalogResponse.data.items) {
+ throw new Error("Catalog service failed to verify products or pricing.");
+ }
+ 
+ pricedItems = catalogResponse.data.items;
+ finalTotalAmount = calculateTotalAmount(pricedItems);
+ 
+ console.log(`Products verified. Final calculated total: ${finalTotalAmount}`);
+ 
+  } catch (error) {
+    // If Catalog fails, we halt before starting the local transaction, no compensation needed.
+    // Log the whole error object for easier debugging (includes axios response/config when available)
+    console.error('Pre-Saga failed (Catalog Service Error). Halting order process.', error && error.stack ? error.stack : error);
+    const errMsg = (error && error.message) ? error.message : (typeof error === 'string' ? error : JSON.stringify(error));
+    throw new Error(`Pricing verification failed: ${errMsg}`);
+  }
 
   // --- 2. START ORDER (Local Transaction) ---
   try {

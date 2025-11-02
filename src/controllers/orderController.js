@@ -5,19 +5,21 @@
     const prisma = new PrismaClient();
     // Helper to save final idempotency status
     async function finalizeIdempotency(key, code, body) {
-        if (!key) return;
-        try {
-            await prisma.idempotencyKey.update({
-                where: { key_value: key }, // Use key_value field name
-                data: {
-                    response_code: code,
-                    response_body: JSON.stringify(body),
-                },
-            });
-        } catch (error) {
-            console.error("Failed to finalize idempotency key:", error.message);
+            if (!key) return;
+            try {
+                // Prisma model defines the PK column as `key` (see schema.prisma).
+                // response_body is a Json column so store the object directly.
+                await prisma.idempotencyKey.update({
+                    where: { key },
+                    data: {
+                        response_code: code,
+                        response_body: body,
+                    },
+                });
+            } catch (error) {
+                console.error("Failed to finalize idempotency key:", error.message);
+            }
         }
-    }
 
     // ------------------------------------
     // 1. GET /v1/orders/:id
@@ -64,7 +66,8 @@
     // ------------------------------------
     export async function createOrder(req, res) {
         const { userId, items } = req.body;
-        const idempotencyKey = req.headers["x-idempotency-key"] || req.headers["idempotency-key"];
+    // Prefer the middleware-attached idempotency key; fall back to raw headers if needed.
+    const idempotencyKey = req.idempotencyKey || req.headers["x-idempotency-key"] || req.headers["idempotency-key"];
         const orderData = { userId, items }; // Data passed to the saga
 
         if (!userId || !items || items.length === 0) {
