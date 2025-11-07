@@ -5,19 +5,37 @@
     const prisma = new PrismaClient();
     // Helper to save final idempotency status
     async function finalizeIdempotency(key, code, body) {
-            if (!key) return;
+            if (!key) {
+                console.warn(`[IDEMPOTENCY_FINALIZE] WARNING: No idempotency key provided, skipping finalization`);
+                return;
+            }
+            
+            console.log(`[IDEMPOTENCY_FINALIZE] Finalizing key "${key}" with status ${code}`);
+            
             try {
                 // Prisma model defines the PK column as `key` (see schema.prisma).
                 // response_body is a Json column so store the object directly.
-                await prisma.idempotencyKey.update({
+                const updated = await prisma.idempotencyKey.update({
                     where: { key },
                     data: {
                         response_code: code,
                         response_body: body,
                     },
                 });
+                
+                console.log(`[IDEMPOTENCY_FINALIZE] Successfully updated idempotency record:`, {
+                    key: updated.key,
+                    response_code: updated.response_code,
+                    updated_at: updated.created_at
+                });
             } catch (error) {
-                console.error("Failed to finalize idempotency key:", error.message);
+                console.error(`[IDEMPOTENCY_FINALIZE] ERROR: Failed to finalize idempotency key "${key}":`, {
+                    message: error.message,
+                    stack: error.stack,
+                    code: error.code,
+                    meta: error.meta
+                });
+                // Don't throw - we don't want to fail the request if idempotency finalization fails
             }
         }
 
@@ -65,25 +83,66 @@
     // 3. POST /v1/orders (Order Creation Saga)
     // ------------------------------------
     export async function createOrder(req, res) {
+        const requestStartTime = Date.now();
         const { userId, items } = req.body;
-    // Prefer the middleware-attached idempotency key; fall back to raw headers if needed.
-    const idempotencyKey = req.idempotencyKey || req.headers["x-idempotency-key"] || req.headers["idempotency-key"];
-        const orderData = { userId, items }; // Data passed to the saga
+        
+        // Prefer the middleware-attached idempotency key; fall back to raw headers if needed.
+        const idempotencyKey = req.idempotencyKey || req.headers["x-idempotency-key"] || req.headers["idempotency-key"];
+        const orderData = { 
+            userId, 
+            items,
+            idempotencyKey: idempotencyKey  // Pass idempotency key to saga
+        };
+
+        console.log(`[CREATE_ORDER] Request received:`, {
+            idempotency_key: idempotencyKey,
+            user_id: userId,
+            items_count: items?.length || 0,
+            items: items?.map(item => ({ sku: item.sku, qty: item.qty || item.quantity })) || []
+        });
 
         if (!userId || !items || items.length === 0) {
+            console.error(`[CREATE_ORDER] Validation failed:`, {
+                has_userId: !!userId,
+                has_items: !!items,
+                items_length: items?.length || 0
+            });
             return res.status(400).json({ error: 'INVALID_REQUEST', message: 'Missing userId or items.' });
         }
 
         try {
+            console.log(`[CREATE_ORDER] Starting order creation saga with idempotency key: "${idempotencyKey}"`);
+            
             // --- Call the Order Creation Saga (Business Logic) ---
             const approvedOrder = await createOrderSaga(orderData);
             
+            const processingTime = Date.now() - requestStartTime;
+            console.log(`[CREATE_ORDER] SUCCESS: Order ${approvedOrder.order_id} created in ${processingTime}ms`);
+            console.log(`[CREATE_ORDER] Order details:`, {
+                order_id: approvedOrder.order_id,
+                customer_id: approvedOrder.customer_id,
+                order_status: approvedOrder.order_status,
+                payment_status: approvedOrder.payment_status,
+                order_total: approvedOrder.order_total,
+                items_count: approvedOrder.items?.length || 0
+            });
+            
             // Saga succeeded and returned the final APPROVED order
+            // Note: totals breakdown is already included in approvedOrder from the saga (Workflow-3)
             await finalizeIdempotency(idempotencyKey, 201, approvedOrder);
+            console.log(`[CREATE_ORDER] Idempotency finalized with status 201 for key: "${idempotencyKey}"`);
+            
             return res.status(201).json(approvedOrder);
 
         } catch (error) {
-            console.error('Order creation failed:', error.message);
+            const processingTime = Date.now() - requestStartTime;
+            console.error(`[CREATE_ORDER] FAILED after ${processingTime}ms:`, {
+                error_message: error.message,
+                error_stack: error.stack,
+                error_name: error.name,
+                order_id: error.order_id || 'N/A',
+                idempotency_key: idempotencyKey
+            });
             
             // This is the error thrown by the Saga, usually after compensation is run.
             const failureResponse = { 
@@ -92,7 +151,10 @@
                 order_id: error.order_id // If the error object contains the ID
             };
             
-            await finalizeIdempotency(idempotencyKey, 500, failureResponse); 
+            console.log(`[CREATE_ORDER] Finalizing idempotency with failure status for key: "${idempotencyKey}"`);
+            await finalizeIdempotency(idempotencyKey, 500, failureResponse);
+            console.log(`[CREATE_ORDER] Idempotency finalized. Returning error response to client.`);
+            
             return res.status(500).json(failureResponse);
         }
     }
